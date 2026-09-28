@@ -1329,7 +1329,7 @@ observeReveal(document);
 /* ============ ADMIN: data di database (site/hero, site/products, site/settings), foto di penyimpanan aset ============ */
 (async function(){
   /* ===== SUPABASE (pengganti database & penyimpanan foto bawaan Claude) ===== */
-  const SB_URL='https://gtbaquuobsqsqwlwgacf.supabase.co', SB_KEY='sb_publishable_nXVZEQmY8QjZPKH2zIhICw_UOFPKekL', BUCKET='foto', SK='tdi_sb_session';
+  const SB_URL='https://cuxwlkrgmuqohckpahpj.supabase.co', SB_KEY='sb_publishable_Mdk7CH6cL7tkVFAAdOGPMw_qbJIZQ36', BUCKET='foto', SK='tdi_sb_session';
   const H=t=>{ const h={apikey:SB_KEY}; if(t) h.Authorization='Bearer '+t; return h; };
   const JH=t=>({...H(t),'Content-Type':'application/json'});
   let sess=null; try{ sess=JSON.parse(localStorage.getItem(SK)||'null'); }catch(e){}
@@ -1350,21 +1350,23 @@ observeReveal(document);
       +'<h3 style="font-size:20px">Login Admin TDI</h3>'
       +'<label style="display:grid;gap:5px;font-weight:600;font-size:13.5px">Email<input type="email" id="tdiEm" required autocomplete="username" style="padding:10px 12px;border:1px solid #D8D5D3;border-radius:8px;font:inherit;font-weight:400"></label>'
       +'<label style="display:grid;gap:5px;font-weight:600;font-size:13.5px">Password<input type="password" id="tdiPw" required autocomplete="current-password" style="padding:10px 12px;border:1px solid #D8D5D3;border-radius:8px;font:inherit;font-weight:400"></label>'
-      +'<div id="tdiErr" style="color:#B8181F;font-size:13px;min-height:18px"></div>'
+      +'<div id="tdiErr" style="color:#B8181F;font-size:13px;min-height:18px">'+dbErr+'</div>'
       +'<div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" id="tdiCancel" class="btn btn-outline" style="padding:10px 18px">Batal</button><button type="submit" class="btn btn-primary" style="padding:10px 22px">Masuk</button></div></form>';
     document.body.appendChild(o);
     const close=()=>{ o.remove(); if(location.hash==='#admin') history.replaceState(null,'',location.pathname+location.search); };
     o.querySelector('#tdiCancel').onclick=close;
     o.querySelector('form').onsubmit=async e=>{ e.preventDefault(); const er=o.querySelector('#tdiErr'); er.textContent='Memeriksa...';
       try{ const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:JH(),body:JSON.stringify({email:o.querySelector('#tdiEm').value.trim(),password:o.querySelector('#tdiPw').value})});
-        if(!r.ok){ er.textContent=r.status===400?'Email atau password salah.':'Gagal masuk ('+r.status+').'; return; }
+        if(!r.ok){ let j={}; try{ j=await r.json(); }catch(_){}
+          const c=j.error_code||'', m=j.msg||j.message||j.error_description||'';
+          er.textContent=c==='invalid_credentials'?'Email atau password salah.':c==='email_not_confirmed'?'Email akun belum dikonfirmasi. Di Supabase: Authentication > Users > klik akun > Confirm.':'Gagal masuk ('+r.status+') '+m; return; }
         saveSess(await r.json()); history.replaceState(null,'',location.pathname+location.search); location.reload(); }
       catch(err){ er.textContent='Tidak bisa terhubung. Periksa koneksi internet.'; } };
     setTimeout(()=>{ const f=o.querySelector('#tdiEm'); if(f) f.focus(); },50);
   }
   window.addEventListener('hashchange',()=>{ if(location.hash==='#admin'&&!sess) loginBox(); });
-  const rows={};
-  try{ const r=await fetch(SB_URL+'/rest/v1/site_data?select=path,data',{headers:H()}); if(r.ok) (await r.json()).forEach(x=>{ rows[x.path]=x.data; }); else console.warn('DB status',r.status); }catch(e){ console.warn('DB:',e); }
+  const rows={}; let dbErr='';
+  try{ const r=await fetch(SB_URL+'/rest/v1/site_data?select=path,data',{headers:H()}); if(r.ok) (await r.json()).forEach(x=>{ rows[x.path]=x.data; }); else { dbErr='Database tidak bisa dibaca (kode '+r.status+').'; console.warn('DB status',r.status); } }catch(e){ dbErr='Tidak bisa terhubung ke Supabase.'; console.warn('DB:',e); }
   const db={ doc:p=>({
     get:async()=>({exists:Object.prototype.hasOwnProperty.call(rows,p), data:()=>rows[p]}),
     set:async o=>{ const t=await token(); if(!t) throw new Error('Sesi login habis. Muat ulang halaman lalu login lagi.');
@@ -1376,7 +1378,11 @@ observeReveal(document);
       const id=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(16).slice(2))+'.jpg';
       const r=await fetch(SB_URL+'/storage/v1/object/'+BUCKET+'/'+id,{method:'POST',headers:{...H(t),'Content-Type':'image/jpeg'},body:b});
       if(!r.ok) throw new Error('Unggah foto ditolak ('+r.status+')'); return {id}; } };
-  } else if(location.hash==='#admin') loginBox();
+  } else {
+    const fb=document.querySelector('.footer-bottom');
+    if(fb){ const a=document.createElement('a'); a.href='#admin'; a.textContent='Admin'; a.style.cssText='opacity:.55;font-size:12px'; a.addEventListener('click',e=>{ e.preventDefault(); loginBox(); }); fb.appendChild(a); }
+    if(location.hash==='#admin') loginBox();
+  }
   const $=s=>document.querySelector(s);
   const E=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const blob=id=>SB_URL+'/storage/v1/object/public/'+BUCKET+'/'+encodeURIComponent(id);
