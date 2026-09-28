@@ -958,7 +958,7 @@ const categories = [
    Contoh: { name:"Beef Slice Premium", img:"images/produk/beef-slice.jpg", category:"daging", ... }
    Foto yang sama dipakai di kartu katalog dan di jendela detail produk. */
 const products = [
-  { name:"Beef Slice Premium", img:"images/produk/beef-slice.jpg", category:"daging", label:"Daging", desc:"Irisan daging sapi pilihan, cocok untuk berbagai olahan masakan.", size:"500 g" },
+  { name:"Beef Slice Premium", category:"daging", label:"Daging", desc:"Irisan daging sapi pilihan, cocok untuk berbagai olahan masakan.", size:"500 g" },
   { name:"Chicken Fillet", category:"daging", label:"Daging", desc:"Fillet ayam segar tanpa tulang, praktis untuk berbagai resep.", size:"1 kg" },
   { name:"Seafood Mix", category:"daging", label:"Daging", desc:"Campuran hasil laut pilihan untuk hidangan seafood favorit Anda.", size:"500 g" },
   { name:"Meat Cuts Special", category:"daging", label:"Daging", desc:"Potongan daging khusus dengan kualitas terjaga.", size:"1 kg" },
@@ -1328,13 +1328,64 @@ observeReveal(document);
 <script>
 /* ============ ADMIN: data di database (site/hero, site/products, site/settings), foto di penyimpanan aset ============ */
 (async function(){
-  if(!window.claude || !claude.use) return;
-  let db=null, assets=null;
-  try{ db=await claude.use('db'); assets=await claude.use('assets'); }catch(e){}
-  if(!db) return;                                      // tanpa database: tampilkan data bawaan halaman
+  /* ===== SUPABASE (pengganti database & penyimpanan foto bawaan Claude) ===== */
+  const SB_URL='https://gtbaquuobsqsqwlwgacf.supabase.co', SB_KEY='sb_publishable_nXVZEQmY8QjZPKH2zIhICw_UOFPKekL', BUCKET='foto', SK='tdi_sb_session';
+  const H=t=>{ const h={apikey:SB_KEY}; if(t) h.Authorization='Bearer '+t; return h; };
+  const JH=t=>({...H(t),'Content-Type':'application/json'});
+  let sess=null; try{ sess=JSON.parse(localStorage.getItem(SK)||'null'); }catch(e){}
+  const saveSess=j=>{ sess={access_token:j.access_token,refresh_token:j.refresh_token,expires_at:j.expires_at||Math.floor(Date.now()/1000)+(j.expires_in||3600)}; try{ localStorage.setItem(SK,JSON.stringify(sess)); }catch(e){} };
+  const dropSess=()=>{ sess=null; try{ localStorage.removeItem(SK); }catch(e){} };
+  async function token(){
+    if(!sess) return null;
+    if(sess.expires_at*1000-Date.now()>60000) return sess.access_token;
+    try{ const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:JH(),body:JSON.stringify({refresh_token:sess.refresh_token})});
+      if(!r.ok) throw new Error('refresh'); saveSess(await r.json()); return sess.access_token; }
+    catch(e){ dropSess(); return null; }
+  }
+  function loginBox(){
+    if(document.getElementById('tdiLogin')) return;
+    const o=document.createElement('div'); o.id='tdiLogin';
+    o.style.cssText='position:fixed;inset:0;z-index:700;background:rgba(20,18,17,.7);display:flex;align-items:center;justify-content:center;padding:16px';
+    o.innerHTML='<form style="background:#fff;width:100%;max-width:380px;border-radius:16px;padding:24px;display:grid;gap:12px;font-family:inherit">'
+      +'<h3 style="font-size:20px">Login Admin TDI</h3>'
+      +'<label style="display:grid;gap:5px;font-weight:600;font-size:13.5px">Email<input type="email" id="tdiEm" required autocomplete="username" style="padding:10px 12px;border:1px solid #D8D5D3;border-radius:8px;font:inherit;font-weight:400"></label>'
+      +'<label style="display:grid;gap:5px;font-weight:600;font-size:13.5px">Password<input type="password" id="tdiPw" required autocomplete="current-password" style="padding:10px 12px;border:1px solid #D8D5D3;border-radius:8px;font:inherit;font-weight:400"></label>'
+      +'<div id="tdiErr" style="color:#B8181F;font-size:13px;min-height:18px">'+dbErr+'</div>'
+      +'<div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" id="tdiCancel" class="btn btn-outline" style="padding:10px 18px">Batal</button><button type="submit" class="btn btn-primary" style="padding:10px 22px">Masuk</button></div></form>';
+    document.body.appendChild(o);
+    const close=()=>{ o.remove(); if(location.hash==='#admin') history.replaceState(null,'',location.pathname+location.search); };
+    o.querySelector('#tdiCancel').onclick=close;
+    o.querySelector('form').onsubmit=async e=>{ e.preventDefault(); const er=o.querySelector('#tdiErr'); er.textContent='Memeriksa...';
+      try{ const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:JH(),body:JSON.stringify({email:o.querySelector('#tdiEm').value.trim(),password:o.querySelector('#tdiPw').value})});
+        if(!r.ok){ let j={}; try{ j=await r.json(); }catch(_){}
+          const c=j.error_code||'', m=j.msg||j.message||j.error_description||'';
+          er.textContent=c==='invalid_credentials'?'Email atau password salah.':c==='email_not_confirmed'?'Email akun belum dikonfirmasi. Di Supabase: Authentication > Users > klik akun > Confirm.':'Gagal masuk ('+r.status+') '+m; return; }
+        saveSess(await r.json()); history.replaceState(null,'',location.pathname+location.search); location.reload(); }
+      catch(err){ er.textContent='Tidak bisa terhubung. Periksa koneksi internet.'; } };
+    setTimeout(()=>{ const f=o.querySelector('#tdiEm'); if(f) f.focus(); },50);
+  }
+  window.addEventListener('hashchange',()=>{ if(location.hash==='#admin'&&!sess) loginBox(); });
+  const rows={}; let dbErr='';
+  try{ const r=await fetch(SB_URL+'/rest/v1/site_data?select=path,data',{headers:H()}); if(r.ok) (await r.json()).forEach(x=>{ rows[x.path]=x.data; }); else { dbErr='Database tidak bisa dibaca (kode '+r.status+').'; console.warn('DB status',r.status); } }catch(e){ dbErr='Tidak bisa terhubung ke Supabase.'; console.warn('DB:',e); }
+  const db={ doc:p=>({
+    get:async()=>({exists:Object.prototype.hasOwnProperty.call(rows,p), data:()=>rows[p]}),
+    set:async o=>{ const t=await token(); if(!t) throw new Error('Sesi login habis. Muat ulang halaman lalu login lagi.');
+      const r=await fetch(SB_URL+'/rest/v1/site_data?on_conflict=path',{method:'POST',headers:{...JH(t),Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({path:p,data:o,updated_at:new Date().toISOString()})});
+      if(!r.ok) throw new Error('Penyimpanan ditolak ('+r.status+')'); rows[p]=o; } }) };
+  let assets=null;
+  if(sess && await token()){
+    assets={ upload:async b=>{ const t=await token(); if(!t) throw new Error('Sesi login habis. Muat ulang halaman lalu login lagi.');
+      const id=(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(16).slice(2))+'.jpg';
+      const r=await fetch(SB_URL+'/storage/v1/object/'+BUCKET+'/'+id,{method:'POST',headers:{...H(t),'Content-Type':'image/jpeg'},body:b});
+      if(!r.ok) throw new Error('Unggah foto ditolak ('+r.status+')'); return {id}; } };
+  } else {
+    const fb=document.querySelector('.footer-bottom');
+    if(fb){ const a=document.createElement('a'); a.href='#admin'; a.textContent='Admin'; a.style.cssText='opacity:.55;font-size:12px'; a.addEventListener('click',e=>{ e.preventDefault(); loginBox(); }); fb.appendChild(a); }
+    if(location.hash==='#admin') loginBox();
+  }
   const $=s=>document.querySelector(s);
   const E=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const blob=id=>'/_blob/'+id;
+  const blob=id=>SB_URL+'/storage/v1/object/public/'+BUCKET+'/'+encodeURIComponent(id);
   const SEL={wa:'a[href^="https://wa.me/"]',shopee:'a[href*="shopee"]',tiktok:'a[href*="tiktok.com"]',instagram:'a[href*="instagram.com"]'};
   Object.keys(SEL).forEach(k=>document.querySelectorAll(SEL[k]).forEach(a=>{ a.dataset.lnk=k; }));
   const defSrc=[0,1,2,3].map(i=>$('.hs-slide[data-index="'+i+'"] img').src);
@@ -1429,6 +1480,10 @@ observeReveal(document);
   if(!assets) return;                                  // hanya penulis (tim) yang mendapat panel admin
   const btn=$('#adminBtn'), ov=$('#adminOverlay'), body=$('#admBody'), st=$('#admStatus'), sv=$('#admSave'), qi=$('#admQ');
   lastJson=snap(); btn.hidden=false;
+  { const hd=document.querySelector('.adm-head'), cl=$('#admClose'), lo=document.createElement('button'), w=document.createElement('span');
+    lo.type='button'; lo.className='adm-del'; lo.style.color='var(--red)'; lo.textContent='Keluar (logout)';
+    lo.onclick=()=>{ if(dirty&&!confirm('Ada perubahan yang belum disimpan. Keluar tanpa menyimpan?')) return; dropSess(); location.reload(); };
+    w.style.cssText='display:flex;gap:18px;align-items:center'; hd.appendChild(w); w.append(lo,cl); }
   const say=t=>{ st.textContent=t; };
   if(savedAt) say('Terakhir disimpan: '+new Date(savedAt).toLocaleString('id-ID'));
   const mark=()=>{ dirty=true; sv.disabled=false; say('Ada perubahan yang belum disimpan.'); };
@@ -1441,8 +1496,8 @@ observeReveal(document);
   async function upload(file,w,h){ say('Mengunggah foto...'); const r=await assets.upload(await crop(file,w,h)); return r.id; }
 
   function load(o){ if(o.slides) slides=o.slides; if(o.items) items=o.items; if(o.set) set={...defSet,...o.set}; if(o.media) media=o.media; if(o.cats) cats=o.cats; if(o.about) about={...about,...o.about}; }
-  async function download(){ try{ const d=await claude.use('downloads'); if(!d) return say('Unduhan tidak tersedia.');
-    await d.save({filename:'cadangan-tdi-'+new Date().toISOString().slice(0,10)+'.json',data:snap()}); say('Cadangan diunduh.'); }catch(err){ say('Unduhan dibatalkan atau gagal.'); } }
+  async function download(){ try{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([snap()],{type:'application/json'})); a.download='cadangan-tdi-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); say('Cadangan diunduh.'); }catch(err){ say('Unduhan gagal.'); } }
   async function restorePrev(){ try{ const p=await db.doc('site/prev').get(); if(!p.exists||!p.data().json) return say('Belum ada versi sebelumnya.');
     if(!confirm('Kembalikan ke versi sebelum simpanan terakhir? (Klik Simpan untuk menerapkan)')) return; load(JSON.parse(p.data().json)); mark(); render(); }catch(err){ say('Gagal memuat versi sebelumnya.'); } }
   const ACT=(k,i,extra)=>'<div class="adm-acts"><button type="button" data-'+k+'-up="'+i+'">&uarr; Naik</button><button type="button" data-'+k+'-dn="'+i+'">&darr; Turun</button>'+(extra||'')+'</div>';
@@ -1546,8 +1601,8 @@ observeReveal(document);
     try{ slides=slides.filter(s=>s.id||s.d!==undefined); say('Menyimpan...');
       if(lastJson) await db.doc('site/prev').set({at:Date.now(),json:lastJson});
       await db.doc('site/hero').set({slides}); await db.doc('site/cats').set({cats}); await db.doc('site/about').set({about}); await db.doc('site/media').set({items:media}); await db.doc('site/products').set({items}); await db.doc('site/settings').set(set); savedAt=Date.now(); await db.doc('site/meta').set({at:savedAt});
-      applyHero(); applyCategories(); applyProducts(); applySettings(); applyMedia(); applyAbout(); lastJson=snap(); dirty=false; sv.disabled=true; say('Tersimpan '+new Date(savedAt).toLocaleTimeString('id-ID')+'. Semua anggota tim akan melihat perubahan ini.'); render(); }
-    catch(err){ say('Gagal menyimpan: '+(err.message||err.code)+' (butuh akses Contributor/Editor)'); } };
+      applyHero(); applyCategories(); applyProducts(); applySettings(); applyMedia(); applyAbout(); lastJson=snap(); dirty=false; sv.disabled=true; say('Tersimpan '+new Date(savedAt).toLocaleTimeString('id-ID')+'. Perubahan langsung tampil di situs.'); render(); }
+    catch(err){ say('Gagal menyimpan: '+(err.message||err.code)+' (coba muat ulang halaman lalu login lagi)'); } };
 })();
 </script>
 </body>
